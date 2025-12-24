@@ -2,99 +2,89 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
 import pandas as pd
-import json
-import re
-import math
-import base64
+import json, re, math
 
-# --- 1. AYARLAR VE YAPAY ZEKA YAPILANDIRMASI ---
-# Not: Streamlit Secrets panelinden API anahtarınızı alacağız
+# --- 1. AYARLAR VE GÜVENLİK ---
 genai.configure(api_key=st.secrets)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- 2. DUYGUSAL ZEKA (WLEIS) PUANLAMA MANTIĞI ---
-def calculate_ei_score(responses):
-    """WLEIS 16 soru: SEA(1-4), OEA(5-8), UOE(9-12), ROE(13-16)"""
-    return {
-        "SEA": sum(responses[0:4]),
-        "OEA": sum(responses[4:8]),
-        "UOE": sum(responses[8:12]),
-        "ROE": sum(responses[12:16]),
-        "EI_Total": sum(responses)
-    }
-
-# --- 3. MULTIMODAL PROMPT OLUŞTURUCU (CoT İLE) ---
-def build_multimodal_prompt(stage_name, response, task_description):
-    return f"""
-You are an expert creativity evaluator using the Basadur Simplex model.
-STAGE: {stage_name}
-TASK: {task_description}
-
-STUDENT RESPONSE:
-<<< {response} >>>
-
-Step 1: Reasoning (Chain-of-Thought)
-- Analyze the student's text in relation to the VISUAL CUES in the image.
-- Evaluate Flexibility (0-3): Are there different conceptual categories?
-- Evaluate Originality (0-3): Is the response rare or insightful?
-- Evaluate Elaboration (0-3): Level of detail and development.
-- Evaluate Convergent Thinking (0-3): Logic, feasibility, and adherence to the task goal. [6]
-
-Step 2: Final Scores
-Return ONLY a JSON block under the heading "Final Scores":
-{{
-  "Flexibility": int,
-  "Originality": int,
-  "Elaboration": int,
-  "Convergent": int,
-  "D_j": int, (Sum of first three)
-  "StageScore_j": int (D_j + Convergent)
-}}
-""".strip()
-
-# --- 4. WEB ARAYÜZÜ (STREAMLIT) ---
 st.set_page_config(page_title="CPS & EI Araştırması", layout="centered")
-st.title("🧩 Yaratıcı Problem Çözme ve Duygusal Zeka Çalışması")
 
-# BÖLÜM 1: Duygusal Zeka (WLEIS - Örnek Sorular)
-with st.expander("Bölüm 1: Duygusal Zeka Anketi", expanded=True):
+# --- 2. MULTIMODAL CoT PROMPT FONKSİYONU ---
+def get_ai_score(stage, student_text, image=None):
+    prompt = f"""
+    You are an expert creativity evaluator using the Basadur model and CEF rubric.
+    STAGE: {stage}
+    STUDENT RESPONSE: "{student_text}"
+
+    Step 1: Reasoning (Chain-of-Thought)
+    - Analyze the response based on visual cues if provided.
+    - Evaluate Flexibility (0-3), Originality (0-3), Elaboration (0-3), and Convergent (0-3).
+    - Calculate D_j = Flexibility + Originality + Elaboration.
+    - Calculate StageScore_j = D_j + Convergent.
+
+    Step 2: Final Scores
+    Return ONLY this JSON under "Final Scores":
+    {{
+      "flex": int, "orig": int, "elab": int, "conv": int, "D_j": int, "total": int
+    }}
+    """
+    inputs = [prompt]
+    if image: inputs.append(image)
+    
+    response = model.generate_content(inputs)
+    match = re.search(r'Final Scores:\s*(\{.*\})', response.text, re.DOTALL)
+    return json.loads(match.group(1)) if match else None
+
+# --- 3. ARAYÜZ (UX) ---
+st.title("🧩 Yaratıcı Problem Çözme Araştırması")
+
+# BÖLÜM 1: WLEIS DUYGUSAL ZEKA (16 Madde)
+with st.expander("Bölüm 1: Duygusal Zeka Ölçeği", expanded=True):
     st.write("Lütfen maddelere katılma derecenizi seçin (1: Hiç, 5: Tamamen)")
-    q1 = st.radio("1. Kendi duygularımın nedenlerini her zaman bilirim.", [1, 2, 3, 4, 5], horizontal=True)
-    # Buraya diğer 15 soruyu ekleyiniz...
-    ei_answers = [q1] * 16 # Kodun çalışması için geçici liste
+    questions =
+    ei_responses =
+    for i, q in enumerate(questions):
+        res = st.select_slider(f"{i+1}. {q}", options=[1, 2, 3, 4, 5], value=3)
+        ei_responses.append(res)
 
-# BÖLÜM 2: Görsel CPS
+# BÖLÜM 2: CPS SÜRECİ
 st.divider()
-st.header("Bölüm 2: Görsel Analiz ve Problem Çözme")
-# Resminizi base64 formatına çevirip AI'ya göndermek en sağlıklı yoldur
-IMAGE_PATH = "senin_resmin.jpg" 
-st.image(IMAGE_PATH, caption="Lütfen bu resmi dikkatle inceleyin.")
+st.header("Bölüm 2: Görsel Analiz")
+# Görsel dosyanızın adı GitHub'da resim.jpg olmalı
+try:
+    from PIL import Image
+    img = Image.open("resim.jpg") 
+    st.image(img, caption="Bu resmi dikkatle inceleyin.")
+except:
+    st.error("Görsel yüklenemedi. Lütfen GitHub'a 'resim.jpg' ekleyin.")
 
-r1 = st.text_area("Aşama 1: Resimde gördüğünüz ana zorlukları veya fırsatları yazın.")
-r2 = st.text_area("Aşama 2: Bu durumu iyileştirmek için aklınıza gelen tüm fikirleri (akıcılık odaklı) listeleyin.")
+r1 = st.text_area("Aşama 1 (Clarify): Resimdeki sorunlar nelerdir?")
+r2 = st.text_area("Aşama 2 (Ideate): Tüm çözüm fikirlerinizi yazın.")
+r3 = st.text_area("Aşama 3 (Develop): En iyi çözümünüzü detaylandırın.")
+r4 = st.text_area("Aşama 4 (Implement): Uygulama için ilk adımınız nedir?")
 
+# --- 4. VERİ KAYIT VE PUANLAMA ---
 if st.button("Çalışmayı Gönder"):
     with st.spinner("AI Yanıtlarınızı Bilimsel Olarak Puanlıyor..."):
-        # AI Analizi (Stage 1 Örneği)
-        prompt = build_multimodal_prompt("Clarify", r1, "Resimdeki bulanık durumu tanımlama")
-        
-        # Resmi AI'nın görebileceği formata çeviriyoruz
-        with open(IMAGE_PATH, "rb") as f:
-            img_data = f.read()
-        
-        # Gemini çağrısı
-        ai_response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": img_data}])
-        
-        # Puanları Ayıklama (Regex)
-        match = re.search(r'Final Scores:\s*(\{.*\})', ai_response.text, re.DOTALL)
-        scores = json.loads(match.group(1)) if match else {}
+        # AI Puanlama
+        s1 = get_ai_score("Clarify", r1, img)
+        s2 = get_ai_score("Ideate", r2)
+        s3 = get_ai_score("Develop", r3)
+        s4 = get_ai_score("Implement", r4)
 
-        # Google Sheets'e Kayıt
+        # EI Puanlama (WLEIS 1-16 ortalaması)
+        ei_total = sum(ei_responses)
+
+        # Google Sheets Kayıt
         conn = st.connection("gsheets", type=GSheetsConnection)
-        ei_data = calculate_ei_score(ei_answers)
-        
-        # Veri setini birleştirip kaydediyoruz
-        final_row = {**ei_data, "CPS_S1_Score": scores.get("StageScore_j", 0), "Text_S1": r1}
-        # conn.create(data=pd.DataFrame([final_row]))
-        
-        st.success("Verileriniz başarıyla kaydedildi!")
+        final_data = {
+            "EI_Score": ei_total,
+            "CPS_S1": s1['total'], "CPS_S2": s2['total'],
+            "CPS_S3": s3['total'], "CPS_S4": s4['total'],
+            "Overall_CPS": s1['total'] + s2['total'] + s3['total'] + s4['total']
+        }
+        df = pd.DataFrame([final_data])
+        # Veriyi mevcut sayfanın sonuna ekler
+        conn.create(data=df)
+        st.success("Tebrikler! Verileriniz başarıyla kaydedildi.")
