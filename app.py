@@ -3,6 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
 import pandas as pd
 import json, re, math
+from PIL import Image
 
 # --- 1. AYARLAR VE GÜVENLİK ---
 genai.configure(api_key=st.secrets)
@@ -10,81 +11,95 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 
 st.set_page_config(page_title="CPS & EI Araştırması", layout="centered")
 
-# --- 2. MULTIMODAL CoT PROMPT FONKSİYONU ---
-def get_ai_score(stage, student_text, image=None):
-    prompt = f"""
-    You are an expert creativity evaluator using the Basadur model and CEF rubric.
-    STAGE: {stage}
-    STUDENT RESPONSE: "{student_text}"
-
-    Step 1: Reasoning (Chain-of-Thought)
-    - Analyze the response based on visual cues if provided.
-    - Evaluate Flexibility (0-3), Originality (0-3), Elaboration (0-3), and Convergent (0-3).
-    - Calculate D_j = Flexibility + Originality + Elaboration.
-    - Calculate StageScore_j = D_j + Convergent.
-
-    Step 2: Final Scores
-    Return ONLY this JSON under "Final Scores":
-    {{
-      "flex": int, "orig": int, "elab": int, "conv": int, "D_j": int, "total": int
-    }}
-    """
-    inputs = [prompt]
-    if image: inputs.append(image)
+# --- 2. AI PUANLAMA MOTORU (7 PROMPT SETİ) ---
+def call_ai_scorer(prompt_text, image=None):
+    """Gemini API'yi çağırır ve JSON çıktısını ayıklar."""
+    inputs = [prompt_text]
+    if image:
+        inputs.append(image)
     
-    response = model.generate_content(inputs)
-    match = re.search(r'Final Scores:\s*(\{.*\})', response.text, re.DOTALL)
-    return json.loads(match.group(1)) if match else None
+    try:
+        response = model.generate_content(inputs)
+        # JSON bloğunu ayıkla
+        match = re.search(r'(\{.*\})', response.text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        return None
+    except Exception as e:
+        st.error(f"AI Puanlama Hatası: {e}")
+        return None
 
-# --- 3. ARAYÜZ (UX) ---
-st.title("🧩 Yaratıcı Problem Çözme Araştırması")
+# --- 3. ARAYÜZ TASARIMI ---
+st.title("🧩 Yaratıcı Problem Çözme ve Duygusal Zeka")
+st.write("Bu araştırma kapsamında verileriniz anonim olarak saklanacaktır.")
 
-# BÖLÜM 1: WLEIS DUYGUSAL ZEKA (16 Madde)
-with st.expander("Bölüm 1: Duygusal Zeka Ölçeği", expanded=True):
-    st.write("Lütfen maddelere katılma derecenizi seçin (1: Hiç, 5: Tamamen)")
-    questions =
+# BÖLÜM 1: DUYGUSAL ZEKA (WLEIS - 16 MADDE)
+with st.expander("Bölüm 1: Duygusal Zeka Anketi", expanded=True):
+    st.info("Lütfen maddelere katılma derecenizi seçin (1: Hiç, 5: Tamamen)")
+    wleis_items =
     ei_responses =
-    for i, q in enumerate(questions):
-        res = st.select_slider(f"{i+1}. {q}", options=[1, 2, 3, 4, 5], value=3)
+    for i, item in enumerate(wleis_items):
+        res = st.select_slider(f"{i+1}. {item}", options=[1, 2, 3, 4, 5], value=3)
         ei_responses.append(res)
 
-# BÖLÜM 2: CPS SÜRECİ
+# BÖLÜM 2: CPS SÜRECİ (8 ADIM - 3 FAZ)
 st.divider()
-st.header("Bölüm 2: Görsel Analiz")
-# Görsel dosyanızın adı GitHub'da resim.jpg olmalı
+st.header("Bölüm 2: Yaratıcı Problem Çözme")
+
+# Görsel Yükleme Kontrolü
 try:
-    from PIL import Image
     img = Image.open("resim.jpg") 
-    st.image(img, caption="Bu resmi dikkatle inceleyin.")
+    st.image(img, caption="Lütfen bu resmi dikkatle inceleyerek soruları yanıtlayın.")
 except:
-    st.error("Görsel yüklenemedi. Lütfen GitHub'a 'resim.jpg' ekleyin.")
+    st.error("Lütfen GitHub deponuza 'resim.jpg' isimli bir görsel ekleyin.")
+    st.stop()
 
-r1 = st.text_area("Aşama 1 (Clarify): Resimdeki sorunlar nelerdir?")
-r2 = st.text_area("Aşama 2 (Ideate): Tüm çözüm fikirlerinizi yazın.")
-r3 = st.text_area("Aşama 3 (Develop): En iyi çözümünüzü detaylandırın.")
-r4 = st.text_area("Aşama 4 (Implement): Uygulama için ilk adımınız nedir?")
+# FAZ 1: PROBLEM FORMULASYONU (Steps 1-3)
+st.subheader("🟦 Aşama 1: Problemi Anlama")
+r1 = st.text_area("Adım 1: Resimle ilgili gördüğün en az 4-5 problemi yaz. En önemlisini belirt ve nedenini açıkla.")
+r2 = st.text_area("Adım 2: Bu problem hakkında bildiğin tüm gerçekleri (sayılar, gözlemler, kısıtlar) yaz.")
+r3 = st.text_area("Adım 3: Seçtiğin problemle ilgili 3 farklı 'Nasıl Yapabiliriz?' (HMW) cümlesi yaz.")
 
-# --- 4. VERİ KAYIT VE PUANLAMA ---
-if st.button("Çalışmayı Gönder"):
-    with st.spinner("AI Yanıtlarınızı Bilimsel Olarak Puanlıyor..."):
-        # AI Puanlama
-        s1 = get_ai_score("Clarify", r1, img)
-        s2 = get_ai_score("Ideate", r2)
-        s3 = get_ai_score("Develop", r3)
-        s4 = get_ai_score("Implement", r4)
+# FAZ 2: ÇÖZÜM BULMA (Steps 4-5)
+st.subheader("🟧 Aşama 2: Fikir Üretme ve Seçme")
+r4 = st.text_area("Adım 4: Bu problemi çözmek için aklına gelen en az 10 farklı fikir üret.")
+r5 = st.text_area("Adım 5: Bu fikirlerden en iyi 2 tanesini seç ve neden iyi olduklarını açıkla.")
 
-        # EI Puanlama (WLEIS 1-16 ortalaması)
+# FAZ 3: PLANLAMA VE UYGULAMA (Steps 6-8)
+st.subheader("🟩 Aşama 3: Çözümü Uygulamaya Hazırla")
+r6 = st.text_area("Adım 6: Çözümünü uygulamak için 3 adımlı bir eylem planı hazırla.")
+r7 = st.text_area("Adım 7: Bu çözümü uygulamak için kimlerden yardım alabilirsin?")
+r8 = st.text_area("Adım 8 (Mini Test): Bu çözümü işe yarayıp yaramadığını nasıl test edersin? (Deneme planı)")
+
+# --- 4. VERİ KAYIT VE OTOMATİK PUANLAMA ---
+if st.button("Çalışmayı Tamamla ve Puanla"):
+    with st.spinner("Yapay Zeka cevaplarınızı bilimsel olarak puanlıyor..."):
+        
+        # prompt_set yapısı (hazırladığınız promptları buraya yerleştiriyoruz)
+        # Sadece Adım 1 ve 4 örneği gösterilmiştir, diğerleri benzer şekilde eklenir.
+        
+        s1 = call_ai_scorer(f"Adım 1 Cevabı: {r1}. Diverjan(0-3) ve Konverjan(0-3) puanla. JSON döndür: {{'D1':int, 'C1':int}}", img)
+        s4 = call_ai_scorer(f"Adım 4 Fikir Listesi: {r4}. Fluency, Flexibility, Originality, Elaboration (0-3) puanla. JSON döndür: {{'Fluency':int, 'Flex':int, 'Orig':int, 'Elab':int}}")
+        
+        # EI Hesaplama
         ei_total = sum(ei_responses)
+        ei_sea = sum(ei_responses[0:4])
+        ei_oea = sum(ei_responses[4:8])
+        ei_uoe = sum(ei_responses[8:12])
+        ei_roe = sum(ei_responses[12:16])
 
         # Google Sheets Kayıt
         conn = st.connection("gsheets", type=GSheetsConnection)
-        final_data = {
-            "EI_Score": ei_total,
-            "CPS_S1": s1['total'], "CPS_S2": s2['total'],
-            "CPS_S3": s3['total'], "CPS_S4": s4['total'],
-            "Overall_CPS": s1['total'] + s2['total'] + s3['total'] + s4['total']
+        
+        final_row = {
+            "EI_Total": ei_total, "EI_SEA": ei_sea, "EI_OEA": ei_oea, "EI_UOE": ei_uoe, "EI_ROE": ei_roe,
+            "S1_D": s1.get('D1',0) if s1 else 0, "S1_C": s1.get('C1',0) if s1 else 0,
+            "S4_Fluency": s4.get('Fluency',0) if s4 else 0,
+            "Overall_CPS": (s1.get('D1',0) + s4.get('Fluency',0)) # Örnek toplama
         }
-        df = pd.DataFrame([final_data])
-        # Veriyi mevcut sayfanın sonuna ekler
+        
+        df = pd.DataFrame([final_row])
         conn.create(data=df)
-        st.success("Tebrikler! Verileriniz başarıyla kaydedildi.")
+        
+        st.success("Tebrikler! Cevaplarınız ve AI puanlarınız Google Sheets'e kaydedildi.")
+        st.balloons()
